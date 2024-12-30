@@ -1,5 +1,7 @@
 import sys
 import time
+import os
+from dotenv import load_dotenv
 
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
@@ -15,66 +17,103 @@ from twitter_langchain import (
 # Configure a file to persist the agent's CDP MPC Wallet Data.
 wallet_data_file = "wallet_data.txt"
 
+# Load .env file at the beginning
+load_dotenv()
+
 
 def initialize_agent():
-    """Initialize the agent with CDP Agentkit Twitter Langchain."""
-    # Initialize LLM.
-    llm = ChatOpenAI(model="gpt-4o-mini")
+    """Initialize the agent with Twitter API."""
+    # Get Twitter API credentials from environment variables
+    values = {
+        "twitter_api_key": os.getenv("TWITTER_API_KEY"),
+        "twitter_api_secret": os.getenv("TWITTER_API_SECRET"),
+        "twitter_access_token": os.getenv("TWITTER_ACCESS_TOKEN"),
+        "twitter_access_token_secret": os.getenv("TWITTER_ACCESS_TOKEN_SECRET"),
+        "bearer_token": os.getenv("TWITTER_BEARER_TOKEN")
+    }
 
-    # Configure CDP Agentkit Twitter Langchain Extension.
-    values = {}
+    # Print keys for debugging (remember to remove later)
+    print("Checking API credentials:")
+    for key, value in values.items():
+        print(f"{key}: {'[SET]' if value else '[MISSING]'}")
 
-    # Initialize CDP Agentkit Twitter Langchain
+    # Verify all required keys exist
+    missing_keys = [k for k, v in values.items() if not v]
+    if missing_keys:
+        raise ValueError(f"Missing required Twitter API keys: {', '.join(missing_keys)}")
+
+    # Initialize Twitter API wrapper
     wrapper = TwitterApiWrapper(**values)
-    toolkit = TwitterToolkit.from_twitter_api_wrapper(wrapper)
-    tools = toolkit.get_tools()
 
-    # Store buffered conversation history in memory.
-    memory = MemorySaver()
-    config = {"configurable": {"thread_id": "CDP Agentkit Chatbot Example!"}}
+    # Test connection
+    try:
+        test = wrapper.client.get_me()
+        print("API Connection Test:", "Success" if test else "Failed")
+    except Exception as e:
+        print("API Connection Error:", str(e))
 
-    # Create ReAct Agent using the LLM and CDP Agentkit tools.
-    return create_react_agent(
-        llm,
-        tools=tools,
-        checkpointer=memory,
-        state_modifier="You are a helpful agent that can interact onchain using the Coinbase Developer Platform Agentkit. You are empowered to interact onchain using your tools. If you ever need funds, you can request them from the faucet if you are on network ID `base-sepolia`. If not, you can provide your wallet details and request funds from the user. If someone asks you to do something you can't do with your currently available tools, you must say so, and encourage them to implement it themselves using the CDP SDK + Agentkit, recommend they go to docs.cdp.coinbase.com for more informaton. Be concise and helpful with your responses. Refrain from restating your tools' descriptions unless it is explicitly requested.",
-    ), config
+    def process_with_twitter(input_text):
+        try:
+            if "my twitter account" in input_text.lower():
+                # Get user information
+                user = wrapper.client.get_me()
+                return {
+                    "messages": [{
+                        "content": f"Your Twitter account info:\n{user}",
+                        "role": "assistant"
+                    }]
+                }
+            elif input_text.lower().startswith("tweet "):
+                # Send tweet
+                tweet_text = input_text[6:]  # Remove "tweet " prefix
+                result = wrapper.client.create_tweet(text=tweet_text)
+                return {
+                    "messages": [{
+                        "content": f"Tweet posted successfully!\n{result}",
+                        "role": "assistant"
+                    }]
+                }
+            else:
+                return {
+                    "messages": [{
+                        "content": "Available commands:\n"
+                                 "- 'what's my twitter account': Show your account info\n"
+                                 "- 'tweet [message]': Post a new tweet\n"
+                                 "What would you like to do?",
+                        "role": "assistant"
+                    }]
+                }
+        except Exception as e:
+            return {
+                "messages": [{
+                    "content": f"Error: {str(e)}",
+                    "role": "assistant"
+                }]
+            }
+
+    return process_with_twitter, {"thread_id": "Twitter Bot Example"}
 
 
 # Autonomous Mode
 def run_autonomous_mode(agent_executor, config, interval=10):
-    """Run the agent autonomously with specified intervals."""
+    """Run Twitter bot autonomously."""
     print("Starting autonomous mode...")
     while True:
         try:
-            # Provide instructions autonomously
-            thought = (
-                "Be creative and do something interesting on the blockchain. "
-                "Choose an action or set of actions and execute it that highlights your abilities."
-            )
-
-            # Run agent in autonomous mode
-            for chunk in agent_executor.stream(
-                {"messages": [HumanMessage(content=thought)]}, config
-            ):
-                if "agent" in chunk:
-                    print(chunk["agent"]["messages"][0].content)
-                elif "tools" in chunk:
-                    print(chunk["tools"]["messages"][0].content)
-                print("-------------------")
-
-            # Wait before the next action
+            thought = "Checking Twitter timeline..."
+            response = agent_executor(thought)
+            print(response["messages"][0]["content"])
+            print("-------------------")
             time.sleep(interval)
 
         except KeyboardInterrupt:
-            print("Goodbye Agent!")
+            print("Goodbye!")
             sys.exit(0)
 
 
 # Chat Mode
 def run_chat_mode(agent_executor, config):
-    """Run the agent interactively based on user input."""
+    """Run Twitter bot interactively."""
     print("Starting chat mode... Type 'exit' to end.")
     while True:
         try:
@@ -82,18 +121,13 @@ def run_chat_mode(agent_executor, config):
             if user_input.lower() == "exit":
                 break
 
-            # Run agent with the user's input in chat mode
-            for chunk in agent_executor.stream(
-                {"messages": [HumanMessage(content=user_input)]}, config
-            ):
-                if "agent" in chunk:
-                    print(chunk["agent"]["messages"][0].content)
-                elif "tools" in chunk:
-                    print(chunk["tools"]["messages"][0].content)
-                print("-------------------")
+            # Process input using Twitter API
+            response = agent_executor(user_input)
+            print(response["messages"][0]["content"])
+            print("-------------------")
 
         except KeyboardInterrupt:
-            print("Goodbye Agent!")
+            print("Goodbye!")
             sys.exit(0)
 
 
